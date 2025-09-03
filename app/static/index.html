@@ -1,0 +1,180 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Timely — Kanban + Calendar</title>
+
+  <!-- Tailwind -->
+  <script src="https://cdn.tailwindcss.com"></script>
+
+  <!-- FullCalendar -->
+  <link href="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.15/main.min.css" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.15/index.global.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@fullcalendar/interaction@6.1.15/index.global.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@fullcalendar/daygrid@6.1.15/index.global.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@fullcalendar/timegrid@6.1.15/index.global.min.js"></script>
+
+  <!-- SortableJS -->
+  <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.2/Sortable.min.js"></script>
+
+  <style>
+    html, body { height: 100%; }
+    .task-card { user-select: none; }
+    .drop-highlight { outline: 2px dashed; outline-offset: 4px; }
+    .grab-handle { cursor: move; font-weight: 700; }
+    .cal-handle { cursor: grab; user-select: none; }
+    .btn-xs { font-size: 11px; padding: 2px 6px; }
+    .split-gutter { width: 8px; cursor: col-resize; background: #e5e7eb; border-radius: 8px; }
+    .modal-bg { position: fixed; inset: 0; background: rgba(0,0,0,.15); display:none; }
+    .modal { position: fixed; inset: 0; display:none; align-items:center; justify-content:center; }
+  </style>
+</head>
+<body class="h-full bg-gray-50">
+  <div class="h-screen p-4">
+    <!-- Main split: Kanban (left) <-> Calendar (right) -->
+    <div id="split" class="h-full w-full flex gap-4">
+      <!-- Kanban pane (resizable) -->
+      <section id="kanbanPane" class="bg-white rounded-2xl shadow p-4 overflow-hidden flex flex-col h-full" style="width:75%;">
+        <div class="flex justify-between items-center mb-3">
+          <h2 class="text-lg font-semibold">Todo / Working / Done / Backlog</h2>
+          <button id="newTaskBtn" class="btn-xs rounded shadow bg-gray-100">+ Task</button>
+        </div>
+
+        <!-- Kanban board with flexible column widths + internal gutters -->
+        <div id="kanbanBoard" class="flex flex-1 min-h-0 gap-3" data-layout="todo,working,done,backlog">
+
+          <!-- Todo -->
+          <div class="kanban-colwrap" data-colwrap="todo" style="width:25%;">
+            <div class="flex flex-col bg-gray-50 rounded-xl border overflow-hidden h-full">
+              <div class="flex items-center justify-between px-3 py-2 border-b bg-white">
+                <h3 class="text-sm font-medium">Todo</h3>
+                <button class="btn-xs rounded bg-gray-100 shadow" data-add="todo">+</button>
+              </div>
+              <div class="px-3 py-2 border-b hidden" data-adder="todo">
+                <form class="grid grid-cols-2 gap-2">
+                  <input class="col-span-2 px-2 py-1 border rounded text-sm" name="title" type="text" placeholder="Title…" required>
+                  <textarea class="col-span-2 px-2 py-1 border rounded text-sm" name="desc" rows="2" placeholder="Description (optional)…"></textarea>
+                  <input class="px-2 py-1 border rounded text-sm" name="date" type="date">
+                  <!-- 30-min slots only -->
+                  <select class="px-2 py-1 border rounded text-sm" name="time"></select>
+                  <button class="btn-xs bg-blue-600 text-white rounded" type="submit">Add</button>
+                  <button class="btn-xs bg-gray-200 rounded" type="button" data-cancel>Cancel</button>
+                </form>
+              </div>
+              <div id="todo" class="flex-1 min-h-0 p-2 overflow-auto space-y-2"></div>
+            </div>
+          </div>
+
+          <!-- Gutter -->
+          <div class="kanban-gutter split-gutter" data-gutter="0"></div>
+
+          <!-- Working -->
+          <div class="kanban-colwrap" data-colwrap="working" style="width:25%;">
+            <div class="flex flex-col bg-gray-50 rounded-xl border overflow-hidden h-full">
+              <div class="flex items-center justify-between px-3 py-2 border-b bg-white">
+                <h3 class="text-sm font-medium">Working</h3>
+                <button class="btn-xs rounded bg-gray-100 shadow" data-add="working">+</button>
+              </div>
+              <div class="px-3 py-2 border-b hidden" data-adder="working">
+                <form class="grid grid-cols-2 gap-2">
+                  <input class="col-span-2 px-2 py-1 border rounded text-sm" name="title" type="text" placeholder="Title…" required>
+                  <textarea class="col-span-2 px-2 py-1 border rounded text-sm" name="desc" rows="2" placeholder="Description (optional)…"></textarea>
+                  <input class="px-2 py-1 border rounded text-sm" name="date" type="date">
+                  <select class="px-2 py-1 border rounded text-sm" name="time"></select>
+                  <button class="btn-xs bg-blue-600 text-white rounded" type="submit">Add</button>
+                  <button class="btn-xs bg-gray-200 rounded" type="button" data-cancel>Cancel</button>
+                </form>
+              </div>
+              <div id="working" class="flex-1 min-h-0 p-2 overflow-auto space-y-2"></div>
+            </div>
+          </div>
+
+          <!-- Gutter -->
+          <div class="kanban-gutter split-gutter" data-gutter="1"></div>
+
+          <!-- Done -->
+          <div class="kanban-colwrap" data-colwrap="done" style="width:25%;">
+            <div class="flex flex-col bg-gray-50 rounded-xl border overflow-hidden h-full">
+              <div class="flex items-center justify-between px-3 py-2 border-b bg-white">
+                <h3 class="text-sm font-medium">Done</h3>
+                <button class="btn-xs rounded bg-gray-100 shadow" data-add="done">+</button>
+              </div>
+              <div class="px-3 py-2 border-b hidden" data-adder="done">
+                <form class="grid grid-cols-2 gap-2">
+                  <input class="col-span-2 px-2 py-1 border rounded text-sm" name="title" type="text" placeholder="Title…" required>
+                  <textarea class="col-span-2 px-2 py-1 border rounded text-sm" name="desc" rows="2" placeholder="Description (optional)…"></textarea>
+                  <input class="px-2 py-1 border rounded text-sm" name="date" type="date">
+                  <select class="px-2 py-1 border rounded text-sm" name="time"></select>
+                  <button class="btn-xs bg-blue-600 text-white rounded" type="submit">Add</button>
+                  <button class="btn-xs bg-gray-200 rounded" type="button" data-cancel>Cancel</button>
+                </form>
+              </div>
+              <div id="done" class="flex-1 min-h-0 p-2 overflow-auto space-y-2"></div>
+            </div>
+          </div>
+
+          <!-- Gutter -->
+          <div class="kanban-gutter split-gutter" data-gutter="2"></div>
+
+          <!-- Backlog (at end) -->
+          <div class="kanban-colwrap" data-colwrap="backlog" style="width:25%;">
+            <div class="flex flex-col bg-gray-50 rounded-xl border overflow-hidden h-full">
+              <div class="flex items-center justify-between px-3 py-2 border-b bg-white">
+                <h3 class="text-sm font-medium">Backlog</h3>
+                <button class="btn-xs rounded bg-gray-100 shadow" data-add="backlog">+</button>
+              </div>
+              <div class="px-3 py-2 border-b hidden" data-adder="backlog">
+                <form class="grid grid-cols-2 gap-2">
+                  <input class="col-span-2 px-2 py-1 border rounded text-sm" name="title" type="text" placeholder="Title…" required>
+                  <textarea class="col-span-2 px-2 py-1 border rounded text-sm" name="desc" rows="2" placeholder="Description (optional)…"></textarea>
+                  <input class="px-2 py-1 border rounded text-sm" name="date" type="date">
+                  <select class="px-2 py-1 border rounded text-sm" name="time"></select>
+                  <button class="btn-xs bg-blue-600 text-white rounded" type="submit">Add</button>
+                  <button class="btn-xs bg-gray-200 rounded" type="button" data-cancel>Cancel</button>
+                </form>
+              </div>
+              <div id="backlog" class="flex-1 min-h-0 p-2 overflow-auto space-y-2"></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Outer gutter (Kanban ↔ Calendar) -->
+      <div id="gutter" class="split-gutter"></div>
+
+      <!-- Calendar pane (resizable) -->
+      <section id="calendarPane" class="bg-white rounded-2xl shadow p-4 overflow-hidden h-full" style="width:25%;">
+        <div id="calendar" class="h-full"></div>
+      </section>
+    </div>
+  </div>
+
+  <!-- Edit Modal -->
+  <div id="modalBg" class="modal-bg"></div>
+  <div id="editModal" class="modal">
+    <div class="bg-white rounded-2xl shadow p-4 w-full max-w-md">
+      <h3 class="text-base font-semibold mb-2">Edit Task</h3>
+      <form id="editForm" class="grid grid-cols-2 gap-2">
+        <input class="col-span-2 px-2 py-1 border rounded text-sm" name="title" type="text" placeholder="Title…" required>
+        <textarea class="col-span-2 px-2 py-1 border rounded text-sm" name="desc" rows="3" placeholder="Description…"></textarea>
+        <input class="px-2 py-1 border rounded text-sm" name="date" type="date">
+        <!-- 30-min slots only -->
+        <select class="px-2 py-1 border rounded text-sm" name="time"></select>
+
+        <div class="col-span-2 flex justify-between items-center mt-2">
+          <button type="button" id="removeFromCalendarBtn" class="btn-xs bg-amber-100 rounded hidden">Remove from calendar</button>
+          <div class="flex gap-2">
+            <button type="button" id="deleteTaskBtn" class="btn-xs bg-red-600 text-white rounded">Delete Task</button>
+            <button type="button" id="editCancel" class="btn-xs bg-gray-200 rounded">Cancel</button>
+            <button type="submit" class="btn-xs bg-blue-600 text-white rounded">Save</button>
+          </div>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Cache-bust -->
+  <script type="module" src="/app.js?v=1401"></script>
+</body>
+</html>
