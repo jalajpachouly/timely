@@ -3,7 +3,7 @@ from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker, declarative_base
 
 # SQLite at project root (timely.db)
-DB_PATH = Path(__file__).resolve().parent.parent / "timely.db"
+DB_PATH = Path(__file__).resolve().parent.parent / "app.db"
 SQLALCHEMY_DATABASE_URL = f"sqlite:///{DB_PATH.as_posix()}"
 
 engine = create_engine(
