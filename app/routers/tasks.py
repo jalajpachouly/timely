@@ -1,4 +1,3 @@
-
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
@@ -10,11 +9,22 @@ from ..schemas import TaskCreate, TaskUpdate, TaskOut
 router = APIRouter()
 
 @router.get("", response_model=List[TaskOut])
-def list_tasks(status: Optional[TaskStatus] = Query(None), db: Session = Depends(get_db)):
+def list_tasks(
+    status: Optional[TaskStatus] = Query(None),
+    tags: Optional[str] = Query(None, description="Comma-separated; match ANY tag"),
+    db: Session = Depends(get_db),
+):
     q = db.query(TaskModel)
     if status:
         q = q.filter(TaskModel.status == status)
-    return q.order_by(TaskModel.status, TaskModel.order).all()
+    tasks = q.order_by(TaskModel.status, TaskModel.order).all()
+
+    # Optional ANY-tag filter server-side
+    if tags:
+        wanted = {t.strip() for t in tags.split(",") if t.strip()}
+        if wanted:
+            tasks = [t for t in tasks if set(t.tags or []) & wanted]
+    return tasks
 
 @router.post("", response_model=TaskOut)
 def create_task(payload: TaskCreate, db: Session = Depends(get_db)):
@@ -23,6 +33,7 @@ def create_task(payload: TaskCreate, db: Session = Depends(get_db)):
         description=payload.description,
         status=TaskStatus(payload.status),
         order=payload.order,
+        tags=payload.tags or [],  # NEW
     )
     db.add(t)
     db.commit()
@@ -42,6 +53,8 @@ def update_task(task_id: int, payload: TaskUpdate, db: Session = Depends(get_db)
         t.status = TaskStatus(payload.status)
     if payload.order is not None:
         t.order = payload.order
+    if payload.tags is not None:           # NEW
+        t.tags = list(payload.tags)
     db.commit()
     db.refresh(t)
     return t
@@ -52,7 +65,6 @@ def get_task(task_id: int, db: Session = Depends(get_db)):
     if not t:
         raise HTTPException(status_code=404, detail="Task not found")
     return t
-
 
 @router.delete("/{task_id}")
 def delete_task(task_id: int, db: Session = Depends(get_db)):

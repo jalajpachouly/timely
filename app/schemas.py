@@ -1,4 +1,4 @@
-
+# app/schemas.py
 from datetime import datetime
 from typing import Optional, List
 from pydantic import BaseModel, Field
@@ -15,12 +15,14 @@ class TaskCreate(BaseModel):
     description: Optional[str] = None
     status: TaskStatus = TaskStatus.backlog
     order: float = 0.0
+    tags: List[str] = []          # tags persisted
 
 class TaskUpdate(BaseModel):
     title: Optional[str] = None
     description: Optional[str] = None
     status: Optional[TaskStatus] = None
     order: Optional[float] = None
+    tags: Optional[List[str]] = None
 
 class TaskOut(BaseModel):
     id: int
@@ -28,8 +30,9 @@ class TaskOut(BaseModel):
     description: Optional[str]
     status: TaskStatus
     order: float
+    tags: List[str] = []
     class Config:
-        from_attributes = True
+        from_attributes = True     # Pydantic v2: ORM mode
 
 class EventCreate(BaseModel):
     title: str

@@ -1,7 +1,7 @@
-
 from sqlalchemy import Column, Integer, String, Text, Enum, Float, DateTime, Boolean, ForeignKey
 from sqlalchemy.orm import relationship
-import enum
+from sqlalchemy.types import TypeDecorator
+import enum, json
 
 from .db import Base
 
@@ -11,6 +11,22 @@ class TaskStatus(str, enum.Enum):
     working = "working"
     done = "done"
 
+# JSON-encoded list for tags (portable)
+class JSONEncodedList(TypeDecorator):
+    impl = Text
+    cache_ok = True
+    def process_bind_param(self, value, dialect):
+        if value is None:
+            return "[]"
+        return json.dumps(list(value))
+    def process_result_value(self, value, dialect):
+        if not value:
+            return []
+        try:
+            return json.loads(value)
+        except Exception:
+            return []
+
 class Task(Base):
     __tablename__ = "tasks"
     id = Column(Integer, primary_key=True, index=True)
@@ -18,6 +34,9 @@ class Task(Base):
     description = Column(Text, nullable=True)
     status = Column(Enum(TaskStatus), nullable=False, default=TaskStatus.backlog)
     order = Column(Float, default=0.0)
+
+    # NEW: tags persisted as JSON list
+    tags = Column(JSONEncodedList, nullable=False, default=list)
 
     events = relationship("Event", back_populates="task", cascade="all, delete-orphan")
 

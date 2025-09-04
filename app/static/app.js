@@ -1,8 +1,13 @@
 // ==== Timely app.js — Kanban + Calendar ==================================
 
 const API = { tasks: "/api/tasks", events: "/api/events" };
-const DISPLAY_STATUSES = ["todo","working","done","backlog"]; // backlog at end
+const DISPLAY_STATUSES = ["todo","working","done","backlog"];
 const MIN_COL_WIDTH = 12; // %
+
+/* Tag state */
+const availableTags = new Set();   // from tasks
+const selectedTags  = new Set();   // UI chips -> filter
+const tasksById     = {};          // id -> task
 
 /* ---------------- Utilities ---------------- */
 async function jsonFetch(url, opts = {}) {
@@ -10,6 +15,34 @@ async function jsonFetch(url, opts = {}) {
   if (!res.ok) throw new Error(await res.text());
   return await res.json();
 }
+function parseTags(str) {
+  return (str || "").split(",").map(s => s.trim()).filter(Boolean);
+}
+function checkboxChip(tag, checked=false) {
+  const label = document.createElement("label");
+  label.className = "tag-chip text-xs";
+  label.innerHTML = `<input type="checkbox" data-tag="${tag}" ${checked ? "checked":""}> <span>${tag}</span>`;
+  return label;
+}
+function rebuildTagFilterBar() {
+  const bar = document.getElementById("tagFilterBar");
+  if (!bar) return;
+  bar.innerHTML = "";
+  [...availableTags].sort().forEach(tag => {
+    const chip = checkboxChip(tag, selectedTags.has(tag));
+    chip.querySelector("input").addEventListener("change", (e) => {
+      if (e.target.checked) selectedTags.add(tag); else selectedTags.delete(tag);
+      applyTagFilters();
+    });
+    bar.appendChild(chip);
+  });
+}
+document.getElementById("clearTagFilter")?.addEventListener("click", () => {
+  selectedTags.clear();
+  rebuildTagFilterBar();
+  applyTagFilters();
+});
+
 function todayISO() {
   const d = new Date();
   const y = d.getFullYear(), m = String(d.getMonth()+1).padStart(2,"0"), dd = String(d.getDate()).padStart(2,"0");
@@ -18,7 +51,7 @@ function todayISO() {
 function toLocalDateTime(dateStr, timeStr) {
   if (!timeStr) return null;
   const d = dateStr || todayISO();
-  return `${d}T${timeStr}`; // local string (no Z)
+  return `${d}T${timeStr}`;
 }
 function plus30min(localDT) {
   const base = new Date(localDT);
@@ -67,11 +100,15 @@ function taskNode(task) {
   el.dataset.id = task.id;
   el.dataset.title = task.title;
 
+  const tags = Array.isArray(task.tags) ? task.tags : [];
+  const tagBadges = tags.map(t => `<span class="text-[10px] px-1 py-0.5 rounded bg-gray-100 border">${t}</span>`).join(" ");
+
   el.innerHTML = `
     <span class="grab-handle px-1 text-sm select-none" title="Drag within Kanban">⋮⋮</span>
     <div class="flex-1 min-w-0">
       <div class="font-medium text-sm whitespace-normal break-words">${task.title}</div>
       ${task.description ? `<div class="text-xs opacity-70 mt-1 whitespace-normal break-words">${task.description}</div>` : ""}
+      ${tags.length ? `<div class="mt-1 flex flex-wrap gap-1">${tagBadges}</div>` : ""}
     </div>
     <div class="flex items-center gap-1 shrink-0">
       <span class="cal-handle btn-xs rounded bg-gray-100 shadow" title="Drag to calendar">📅</span>
@@ -80,7 +117,6 @@ function taskNode(task) {
     </div>
   `;
 
-  // Delete: remove all events, then task
   el.querySelector('[data-action="delete"]').addEventListener("click", async () => {
     try {
       const evs = await jsonFetch(`${API.events}?task_id=${task.id}`);
@@ -88,26 +124,37 @@ function taskNode(task) {
     } catch {}
     await jsonFetch(`${API.tasks}/${task.id}`, { method:"DELETE" });
     el.remove();
+    delete tasksById[task.id];
+    applyTagFilters();
     calendar?.refetchEvents?.();
   });
 
-  // Edit
   el.querySelector('[data-action="edit"]').addEventListener("click", () => openEditModal(task, { fromCalendar:false }));
 
   return el;
 }
 
-/* ---------------- Kanban Logic ---------------- */
+/* ---------------- Kanban ---------------- */
 async function loadTasks() {
+  Object.keys(tasksById).forEach(k => delete tasksById[k]);
+  availableTags.clear();
+
   for (const status of DISPLAY_STATUSES) {
     const col = document.getElementById(status);
     if (!col) continue;
     col.innerHTML = "";
     const data = await jsonFetch(`${API.tasks}?status=${status}`);
-    data.forEach(t => col.appendChild(taskNode(t)));
+    data.forEach(t => {
+      t.tags = Array.isArray(t.tags) ? t.tags : [];
+      tasksById[t.id] = t;
+      t.tags.forEach(tag => availableTags.add(tag));
+      col.appendChild(taskNode(t));
+    });
   }
+  rebuildTagFilterBar();
   makeColumnsSortable();
   enableCalendarExternalDrag();
+  applyTagFilters();
 }
 
 function makeColumnsSortable() {
@@ -127,12 +174,13 @@ function makeColumnsSortable() {
           method: "PUT",
           body: JSON.stringify({ status: newStatus, order })
         });
+        if (tasksById[id]) tasksById[id].status = newStatus;
+        applyTagFilters();
       }
     });
   });
 }
 
-// Calendar drag binding (guarded)
 function enableCalendarExternalDrag() {
   const Draggable = window.FullCalendar && window.FullCalendar.Draggable;
   if (!Draggable) { console.warn("FullCalendar.Draggable missing"); return; }
@@ -152,6 +200,23 @@ function enableCalendarExternalDrag() {
     });
     container.dataset.draggableBound = "1";
   });
+}
+
+/* ---------------- Tag filtering ---------------- */
+function taskMatchesFilter(task) {
+  if (selectedTags.size === 0) return true;
+  const tgs = task.tags || [];
+  return tgs.some(t => selectedTags.has(t));
+}
+function applyTagFilters() {
+  // Kanban
+  document.querySelectorAll(".task-card").forEach(card => {
+    const t = tasksById[Number(card.dataset.id)];
+    const ok = t ? taskMatchesFilter(t) : (selectedTags.size === 0);
+    card.style.display = ok ? "" : "none";
+  });
+  // Calendar
+  calendar?.refetchEvents?.();
 }
 
 /* ---------------- Inline Adders ---------------- */
@@ -179,16 +244,16 @@ function bindInlineAdders() {
       const title = (fd.get("title") || "").toString().trim();
       const desc  = (fd.get("desc")  || "").toString().trim();
       const date  = (fd.get("date")  || "").toString();
-      const time  = (fd.get("time")  || "").toString(); // already a 30-min option
+      const time  = (fd.get("time")  || "").toString();
+      const tags  = parseTags((fd.get("tags") || "").toString());
 
       if (!title) return;
 
-      // Rule: if no time, task MUST go to backlog
       const statusToSave = time ? status : "backlog";
 
       const task = await jsonFetch(API.tasks, {
         method: "POST",
-        body: JSON.stringify({ title, description: desc, status: statusToSave, order: 1 })
+        body: JSON.stringify({ title, description: desc, status: statusToSave, order: 1, tags })
       });
 
       const startLocal = toLocalDateTime(date, time);
@@ -212,11 +277,10 @@ function bindInlineAdders() {
     });
   });
 
-  // Quick add to Backlog
   document.getElementById("newTaskBtn")?.addEventListener("click", async () => {
     const title = prompt("Task title?");
     if (!title) return;
-    await jsonFetch(API.tasks, { method: "POST", body: JSON.stringify({ title, description: "", status: "backlog", order: 1 }) });
+    await jsonFetch(API.tasks, { method: "POST", body: JSON.stringify({ title, description: "", status: "backlog", order: 1, tags: [] }) });
     await loadTasks();
   });
 }
@@ -237,14 +301,12 @@ async function openEditModal(task, ctx = { fromCalendar:false, eventId:null, eve
 
   if (!bg || !modal || !form) return;
 
-  // Fill time select options once
   fillTimeSelect(form.time);
 
-  // Prefill text
   form.title.value = task.title || "";
   form.desc.value  = task.description || "";
+  form.tags.value  = (Array.isArray(task.tags) ? task.tags : []).join(", ");
 
-  // Prefill date/time (prefer the clicked event)
   let prefillStart = ctx.fromCalendar && ctx.eventStart ? ctx.eventStart : (await getEventForTask(task.id))?.start || null;
   if (prefillStart) {
     const { date, time } = isoToLocalParts(prefillStart);
@@ -255,7 +317,6 @@ async function openEditModal(task, ctx = { fromCalendar:false, eventId:null, eve
     form.time.value = "";
   }
 
-  // Remove from calendar -> delete that event and move task to backlog
   if (ctx.fromCalendar && ctx.eventId) {
     removeBtn?.classList.remove("hidden");
     removeBtn.onclick = async () => {
@@ -263,7 +324,6 @@ async function openEditModal(task, ctx = { fromCalendar:false, eventId:null, eve
       await jsonFetch(`${API.tasks}/${task.id}`, { method: "PUT", body: JSON.stringify({ status: "backlog" }) });
       calendar?.refetchEvents?.();
       await loadTasks();
-      // Clear date/time in the form after removal
       form.time.value = "";
     };
   } else {
@@ -271,7 +331,6 @@ async function openEditModal(task, ctx = { fromCalendar:false, eventId:null, eve
     removeBtn && (removeBtn.onclick = null);
   }
 
-  // Delete Task (and all its events)
   if (deleteBtn) {
     deleteBtn.onclick = async () => {
       try {
@@ -311,20 +370,20 @@ document.getElementById("editForm")?.addEventListener("submit", async (e) => {
   const title = (fd.get("title") || "").toString().trim();
   const desc  = (fd.get("desc")  || "").toString().trim();
   const date  = (fd.get("date")  || "").toString();
-  const time  = (fd.get("time")  || "").toString(); // 30-min slot or ""
+  const time  = (fd.get("time")  || "").toString();
+  const tags  = parseTags((fd.get("tags") || "").toString());
 
   if (!title) return;
 
-  // Update text
   await jsonFetch(`${API.tasks}/${editTaskId}`, {
     method: "PUT",
-    body: JSON.stringify({ title, description: desc })
+    body: JSON.stringify({ title, description: desc, tags })
   });
+  if (tasksById[editTaskId]) tasksById[editTaskId].tags = tags;
 
   const startLocal = toLocalDateTime(date, time);
 
   if (startLocal) {
-    // Upsert event
     const endLocal = plus30min(startLocal);
     if (calendarContext.fromCalendar && calendarContext.eventId) {
       await jsonFetch(`${API.events}/${calendarContext.eventId}`, {
@@ -347,7 +406,6 @@ document.getElementById("editForm")?.addEventListener("submit", async (e) => {
     }
     calendar?.refetchEvents?.();
   } else {
-    // No time set => ensure task is in backlog and remove ALL its events
     try {
       const evs = await jsonFetch(`${API.events}?task_id=${editTaskId}`);
       if (Array.isArray(evs)) await Promise.all(evs.map(ev => jsonFetch(`${API.events}/${ev.id}`, { method:"DELETE" })));
@@ -387,19 +445,24 @@ function setupCalendar() {
         try {
           const q = new URLSearchParams({ start: info.startStr, end: info.endStr });
           const data = await jsonFetch(`${API.events}?${q.toString()}`);
-          success(data.map(e => ({
+          const filtered = data.filter(e => {
+            if (selectedTags.size === 0) return true;
+            if (!e.task_id) return false;
+            const t = tasksById[e.task_id];
+            return t ? taskMatchesFilter(t) : false;
+          }).map(e => ({
             id: e.id,
             title: e.title,
             start: e.start,
             end: e.end,
             allDay: e.allDay,
             extendedProps: { taskId: e.task_id || null }
-          })));
+          }));
+          success(filtered);
         } catch (err) { failure(err); }
       }
     }],
 
-    // Select to create quick event
     select: async (sel) => {
       const title = prompt("Event title?");
       if (!title) { calendar.unselect(); return; }
@@ -408,7 +471,6 @@ function setupCalendar() {
       calendar.unselect();
     },
 
-    // Kanban -> Calendar
     eventReceive: async (info) => {
       try {
         const s = info.event.startStr;
@@ -441,11 +503,9 @@ function setupCalendar() {
       } catch (err) { console.error(err); info.revert(); }
     },
 
-    // Click event -> open task in edit mode (shows "Remove from calendar")
     eventClick: async (info) => {
       const taskId = info.event.extendedProps.taskId;
       if (!taskId) {
-        // event without a linked task: just delete
         await jsonFetch(`${API.events}/${info.event.id}`, { method: "DELETE" });
         calendar.refetchEvents();
         return;
@@ -546,4 +606,4 @@ setupCalendar();
 bindInlineAdders();
 loadTasks();
 initKanbanSplitters();
-console.log("Timely ready: backlog rule + 30-min selects + full flexibility");
+console.log("Timely ready: tag persistence + tag filtering");

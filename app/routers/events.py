@@ -1,4 +1,3 @@
-
 from typing import List, Optional
 from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -29,7 +28,6 @@ def list_events(
         id=e.id, title=e.title, start=e.start, end=e.end,
         allDay=e.all_day, task_id=e.task_id
     ) for e in events]
-
 
 @router.post("", response_model=EventOut)
 def create_event(payload: EventCreate, db: Session = Depends(get_db)):
